@@ -9,3 +9,6 @@ inc/champsim.h.bak
 
 bin/
 obj/
+
+*trace/
+results*
