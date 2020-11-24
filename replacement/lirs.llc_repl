@@ -1,0 +1,181 @@
+/*
+ * Computer Achitecture - Lab 1
+ * Author:      Wang Yueqian
+ * Snumber:     1700016650
+ */
+
+#include "cache.h"
+#include <list>
+#include <map>
+#include <algorithm>
+
+#define L_HIR (LLC_WAY*0.1)
+#define L_LIR (LLC_WAY-L_HIR)
+
+enum LIRSSet{ NONE, LIR, HIR, NHIR };
+
+struct LIRSNode {
+    uint32_t cache_addr;
+    uint64_t mem_addr;
+    LIRSSet lirs_set_type;
+};
+
+class LIRSManager {
+public:
+    uint32_t L = LLC_WAY, L_lir = L_LIR, L_hir = L_HIR;
+    uint32_t lir_size = 0, hir_size = 0, nhir_size = 0;
+    list<u_int64_t> S, Q;
+    map<u_int64_t, LIRSNode> addr_map;
+
+    uint32_t find_victim();
+    void update(uint32_t way, uint64_t full_addr);
+    void debug_print();
+
+private:
+    void stack_pruning();
+} lirs_manager[LLC_SET];
+
+uint32_t LIRSManager::find_victim() {
+    if (lir_size + hir_size < L) {
+        // have empty cache blocks left
+        printf("[DEBUG] [LIRSManager] have empty cache block %u\n", lir_size + hir_size);
+        return lir_size + hir_size;
+    }
+    return addr_map[*Q.begin()].cache_addr;
+}
+
+void LIRSManager::stack_pruning() {
+    while (addr_map[*S.rbegin()].lirs_set_type != LIRSSet::LIR) {
+        addr_map.erase(*S.rbegin());
+        S.pop_back();
+    }
+}
+
+void LIRSManager::update(uint32_t way, uint64_t full_addr) {
+    LIRSNode new_node;
+    if (addr_map.find(full_addr) == addr_map.end()) {
+        LIRSSet new_node_type;
+        if (lir_size < L_lir) {
+            new_node_type = LIR;
+            ++ lir_size;
+        }
+        else if (hir_size < L_hir) {
+            new_node_type = HIR;
+            ++ hir_size;
+        }
+        else {
+            new_node_type = NHIR;
+            ++ nhir_size;
+        }
+        new_node = LIRSNode { way, full_addr, new_node_type };
+        printf("[DEBUG] [LIRSManager] assigned block %u node_type %u\n", full_addr, new_node_type);
+        addr_map[full_addr] = new_node;
+    }
+    else {
+        new_node = addr_map[full_addr];
+        printf("[DEBUG] [LIRSManager] found block %u node_type %u\n", full_addr, new_node.lirs_set_type);
+    }
+
+    if (new_node.lirs_set_type == LIR) {
+        auto node_pos_in_S = find(S.begin(), S.end(), full_addr);
+        if (node_pos_in_S != S.end()) S.erase(node_pos_in_S);
+        S.push_front(full_addr);
+        stack_pruning();
+    }
+    else if (new_node.lirs_set_type == HIR) {
+        auto node_pos_in_S = find(S.begin(), S.end(), full_addr);
+        if (node_pos_in_S != S.end()) {
+            S.erase(node_pos_in_S);
+            S.push_front(full_addr);
+
+            addr_map[full_addr].lirs_set_type = LIR;
+
+            auto node_pos_in_Q = find(Q.begin(), Q.end(), full_addr);
+            if (node_pos_in_Q != Q.end()) Q.erase(node_pos_in_Q);
+
+            addr_map[*S.rbegin()].lirs_set_type = HIR;
+            Q.push_back(*S.rbegin());
+            S.pop_back();
+            stack_pruning();
+        }
+        else {
+            S.push_front(full_addr);
+            Q.push_back(full_addr);
+        }
+    }
+    else {
+        addr_map[*Q.begin()].lirs_set_type = NHIR;
+        Q.pop_front();
+
+        auto node_pos_in_S = find(S.begin(), S.end(), full_addr);
+        if (node_pos_in_S != S.end()) {
+            S.erase(node_pos_in_S);
+            S.push_front(full_addr);
+            addr_map[full_addr].lirs_set_type = LIR;
+
+            addr_map[*S.rbegin()].lirs_set_type = HIR;
+            Q.push_back(*S.rbegin());
+            S.pop_back();
+            stack_pruning();
+        }
+        else {
+            S.push_front(full_addr);
+            addr_map[full_addr].lirs_set_type = HIR;
+            Q.push_back(full_addr);
+        }
+    }
+}
+
+void LIRSManager::debug_print() {
+    printf("[DEBUG] lir, hir, nhir size: %u %u %u\n", lir_size, hir_size, nhir_size);
+}
+
+// initialize replacement state
+void CACHE::llc_initialize_replacement()
+{
+    printf("[DEBUG] llc_replacement experient started!\n");
+}
+
+// find replacement victim
+uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type)
+{
+    uint32_t victim = lirs_manager[set].find_victim();
+    printf("[DEBUG] set %u found victim %u\n", set, victim);
+}
+
+// called on every cache hit and cache fill
+void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit)
+{
+    string TYPE_NAME;
+    if (type == LOAD)
+        TYPE_NAME = "LOAD";
+    else if (type == RFO)
+        TYPE_NAME = "RFO";
+    else if (type == PREFETCH)
+        TYPE_NAME = "PF";
+    else if (type == WRITEBACK)
+        TYPE_NAME = "WB";
+    else
+        assert(0);
+
+    if (hit)
+        TYPE_NAME += "_HIT";
+    else
+        TYPE_NAME += "_MISS";
+
+    if ((type == WRITEBACK) && ip)
+        assert(0);
+
+    // uncomment this line to see the LLC accesses
+    // cout << "CPU: " << cpu << "  LLC " << setw(9) << TYPE_NAME << " set: " << setw(5) << set << " way: " << setw(2) << way;
+    // cout << hex << " paddr: " << setw(12) << paddr << " ip: " << setw(8) << ip << " victim_addr: " << victim_addr << dec << endl;
+
+    printf("[DEBUG] cache_visit_type %u, new full_addr %u, hit situation %u, update set %u， way %u state\n", type, full_addr, hit, set, way);
+    lirs_manager[set].update(way, full_addr);
+}
+
+void CACHE::llc_replacement_final_stats()
+{
+    printf("[DEBUG] llc_replacement experient finished!\n");
+}
+
